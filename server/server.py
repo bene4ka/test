@@ -48,9 +48,8 @@ def arguments():
         logger.critical("UNEXPLAINED COUNT IN VERBOSITY LEVEL!")
         print("UNEXPLAINED COUNT IN VERBOSITY LEVEL!")
         sys.exit()
-    log_message = 'Будем пробовать запуститься с портом ' + str(port) + \
-                  (' на всех интерфейсах.' if address == '' else 'на интерфейсе' + address + '.')
-    logger.info(log_message)
+    logger.info('Будем пробовать запуститься с портом {}'.format(str(port)) +
+                (' на всех интерфейсах.' if address == '' else 'на интерфейсе {}.'.format(address)))
     # Возврат листа [порт, адрес]
     return [port, address]
 
@@ -82,46 +81,46 @@ def receiver(data, addr):
     :return: ответ клиенту в формате string.
     """
     if data.get('action') == 'presence':
-        log_message = 'Пришло presence сообщение от клиента ' + addr
-        logger.info(log_message)
-        log_message = 'Содержимое сообщения: ' + str(data)
-        logger.debug(log_message)
+        logger.info('Пришло presence сообщение от клиента {}.'.format(addr))
+        logger.debug('Содержимое сообщения: {}.'.format(str(data)))
         resp = 'You are online!'
     else:
         resp = 'Error action, pal.'
-        log_message = 'Пришло что-то неведомое от клиента ' + addr
-        logger.info(log_message)
-        log_message = 'Содержимое сообщения: ' + str(data)
-        logger.debug(log_message)
+        logger.info('Пришло что-то неведомое от клиента {}.'.format(addr))
+        logger.debug('Содержимое сообщения: {}. '.format(str(data)))
     return resp
 
 
 def listen(s):
     """
-    Бесконечный цикл, ожидает сообщения от клиента, передает их в декодированном виде в receiver(), для анализа и
+    Ожидает сообщения от клиента, передает их в декодированном виде в receiver(), для анализа и
     соответствующего действию ответа.
     :param s: сокет, созданный в функции sock_bind
     """
-    logger.info('Начинаю ожидать соединения с клиентом.')
-    while True:
-        client, addr = s.accept()
-        data_json = client.recv(1000000)
-        if not data_json:
-            break
+    client, addr = s.accept()
+    logger.info('Присоединился клиент {}.'.format(addr[0] + '.'))
+    data_json = client.recv(1000000)
+    try:
         data = json.loads(data_json.decode('utf-8'))
-        print('Пришло сообщение: ', data, ', от клиента: ', addr)
-        respond = receiver(data, addr[0])
-        client.send(respond.encode('utf-8'))
-        client.close()
-        log_message = 'Отсоединился клиент ' + addr[0] + '.'
-        logger.info(log_message)
+    except UnicodeDecodeError:
+        data = {'action': ''}
+        logger.warning('Не получилось декодировать сообщение от клиента {}.'.format(addr[0]))
+    respond = receiver(data, addr[0])
+    client.send(respond.encode('utf-8'))
+    client.close()
+    logger.info('Отсоединился клиент {}.'.format(addr[0]))
 
 
 # main-функция
 def main():
-    args = arguments()
-    s = sock_bind(args)
-    listen(s)
+    try:
+        args = arguments()
+        s = sock_bind(args)
+        logger.info('Начинаю ожидать соединения с клиентом.')
+        while True:
+            listen(s)
+    except Exception as exception:
+        logger.critical('Эх! Упал я! С эксцепшном вот таким: {}'.format(exception.__class__.__name__))
 
 
 # Точка входа
