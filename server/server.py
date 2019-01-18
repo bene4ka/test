@@ -5,11 +5,44 @@ import json
 import argparse
 from socket import *
 import logging
+import inspect
+import select
 import server_log_config
 
 logger = logging.getLogger('app.main')
 
 
+class Log():
+    """
+    Class of decorator, Used to log functions calls.
+    """
+
+    def __init__(self):
+        pass
+
+    # Магический метод __call__ позволяет обращаться к
+    # объекту класса, как к функции
+    def __call__(self, func):
+        def decorated(*args, **kwargs):
+            def whosdaddy():
+                """
+                Returns name or the caller funtion.
+                :return: caller function name.
+                """
+                return inspect.stack()[2][3]
+
+            res = func(*args, **kwargs)
+            logger.debug(
+                'Function {} with args {}, kwargs {} = {} was called '
+                'from function {}.'.format(
+                    func.__name__, args, kwargs, res, whosdaddy())
+            )
+            return res
+
+        return decorated
+
+
+@Log()
 def arguments():
     """
     Принимает аргументы командной строки [p, n, v], где:
@@ -54,6 +87,7 @@ def arguments():
     return [port, address]
 
 
+@Log()
 def sock_bind(args):
     """"
     Создает TCP-сокет и присваает порт и интерфейс, полученный из функции arguments()
@@ -67,10 +101,12 @@ def sock_bind(args):
     except OSError:
         logger.error('Выбранный порт уже занят.')
     s.listen(5)  # Переходит в режим ожидания запросов, одновременно не болеее 5 запросов.
+    s.settimeout(0.2)  # Set timeout
     logger.info('Перешли в режим LISTEN.')
     return s
 
 
+@Log()
 def receiver(data, addr):
     """
     Получает принятые данные и анализирует. Если это presence сообщение от залогинившегося пользователя, посылает ему
@@ -81,9 +117,10 @@ def receiver(data, addr):
     :return: ответ клиенту в формате string.
     """
     if data.get('action') == 'presence':
+        user_key = data.get('user').get('user')
         logger.info('Пришло presence сообщение от клиента {}.'.format(addr))
         logger.debug('Содержимое сообщения: {}.'.format(str(data)))
-        resp = 'You are online!'
+        resp = 'You are online, ' + user_key + '!'
     else:
         resp = 'Error action, pal.'
         logger.info('Пришло что-то неведомое от клиента {}.'.format(addr))
@@ -91,6 +128,7 @@ def receiver(data, addr):
     return resp
 
 
+@Log()
 def listen(s):
     """
     Ожидает сообщения от клиента, передает их в декодированном виде в receiver(), для анализа и
@@ -111,14 +149,50 @@ def listen(s):
     logger.info('Отсоединился клиент {}.'.format(addr[0]))
 
 
+@Log()
+def s_listen(s):
+    clients = []
+
+    while True:
+        try:
+            client, addr = s.accept()
+        except OSError as e:
+            pass
+        else:
+            logger.info('Received connection query from {}'.format(addr[0]))
+            clients.append(client)
+        finally:
+            w = []
+            r = []
+            try:
+                r, w, e = select.select([], clients, [], 0)
+            except Exception as e:
+                pass
+
+            for s_client in w:
+                try:
+                    data_json = s_client.recv(1024)
+                    try:
+                        data = json.loads(data_json.decode('utf-8'))
+                    except UnicodeDecodeError:
+                        data = {'action': ''}
+                        logger.warning('Не получилось декодировать сообщение от клиента {}.'.format(addr[0]))
+                    respond = receiver(data, addr[0])
+                    s_client.send(respond.encode('utf-8'))
+                    s_client.close()
+                except:
+                    clients.remove(s_client)
+
+
 # main-функция
 def main():
     try:
+        logger.info('Процесс сервера стартован!')
         args = arguments()
         s = sock_bind(args)
         logger.info('Начинаю ожидать соединения с клиентом.')
         while True:
-            listen(s)
+            s_listen(s)
     except Exception as exception:
         logger.critical('Эх! Упал я! С эксцепшном вот таким: {}'.format(exception.__class__.__name__))
 
